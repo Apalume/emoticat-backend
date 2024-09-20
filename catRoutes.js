@@ -49,99 +49,23 @@ async function analyzeCatEmotion(base64Image) {
   }
 }
 
-router.post('/analyze', authenticateToken,  upload.single('image'), async (req, res) => {
-  const { image, petId } = req.body;
+router.post('/analyze', authenticateToken, upload.single('image'), async (req, res) => {
+  const { petId } = req.body;
+  const image = req.file;
 
   if (!image || !petId) {
     return res.status(400).json({ error: 'Image and petId are required' });
   }
 
   try {
-    const result = await analyzeCatEmotion(image);
+    // Convert image buffer to base64
+    const base64Image = image.buffer.toString('base64');
     
-    // Store the image in R2
-    if (image) {
-      const fileBuffer = image.buffer;
-      const filename = `${uuidv4()}.jpg`;
-      imageKey = `pet-images/${filename}`;
+    // Analyze cat emotion
+    const emotion = await analyzeCatEmotion(base64Image);
 
-      const uploadParams = {
-        Bucket: BUCKET_NAME,
-        Key: imageKey,
-        Body: fileBuffer,
-        ContentType: req.file.mimetype,
-      };
-
-      await r2Client.send(new PutObjectCommand(uploadParams));
-    }
-    // Store the emotion record in the database
-    const client = await pool.connect();
-
-    try {
-      await client.query('BEGIN');
-      const emotionRecordResult = await client.query(
-        'INSERT INTO emotion_records (pet_id, emotion, image_key) VALUES ($1, $2, $3) RETURNING id',
-        [petId, result, imageKey]
-      );
-      const emotionRecordId = emotionRecordResult.rows[0].id;
-
-      // Get emotion details
-      const emotionDetails = await openai.chat.completions.create({
-        model: "gpt-4o",
-        messages: [{
-          role: "user",
-          content: `Return only a valid JSON object with the following structure, and no other text:
-          {
-            "description": "A sentence of what it means for a cat to be ${result} and how to identify it.",
-            "tipsAndRecs": ["Tip 1", "Tip 2", "Tip 3"]
-          }
-          The tips and recommendations should be about what to do when a cat is in this emotional state.`
-        }]
-      });
-
-      const parsedEmotionDetails = JSON.parse(emotionDetails.choices[0].message.content);
-
-      // Update emotion record with description
-      await client.query(
-        'UPDATE emotion_records SET emotion_text = $1 WHERE id = $2',
-        [parsedEmotionDetails.description, emotionRecordId]
-      );
-
-      // Store tips and recommendations
-      for (const tip of parsedEmotionDetails.tipsAndRecs) {
-        await client.query(
-          'INSERT INTO tips_and_recs (emotion_record_id, tip) VALUES ($1, $2)',
-          [emotionRecordId, tip]
-        );
-      }
-
-      await client.query('COMMIT');
-      res.json({ 
-        message: result, 
-        emotionDetails: parsedEmotionDetails,
-        imageKey: imageKey // Include the imageKey in the response
-      });
-    } catch (dbError) {
-      await client.query('ROLLBACK');
-      throw dbError;
-    } finally {
-      client.release();
-    }
-  } catch (error) {
-    console.error('Error:', error);
-    res.status(500).json({ error: 'An error occurred while analyzing the image', details: error.message });
-  }
-});
-
-router.post('/get-emotion-details', authenticateToken, async (req, res) => {
-  const { emotion } = req.body;
-
-  if (!emotion) {
-    return res.status(400).json({ error: 'Emotion is required' });
-  }
-
-  try {
-    const response = await openai.chat.completions.create({
+    // Get emotion details
+    const emotionDetails = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [{
         role: "user",
@@ -154,11 +78,58 @@ router.post('/get-emotion-details', authenticateToken, async (req, res) => {
       }]
     });
 
-    const result = JSON.parse(response.choices[0].message.content);
-    res.json(result);
+    const parsedEmotionDetails = JSON.parse(emotionDetails.choices[0].message.content);
+
+    // Store the image in R2
+    let imageKey = null;
+    if (image) {
+      const filename = `${uuidv4()}.jpg`;
+      imageKey = `pet-images/${filename}`;
+
+      const uploadParams = {
+        Bucket: BUCKET_NAME,
+        Key: imageKey,
+        Body: image.buffer,
+        ContentType: image.mimetype,
+      };
+
+      await r2Client.send(new PutObjectCommand(uploadParams));
+    }
+
+    // Store the emotion record in the database
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+      const emotionRecordResult = await client.query(
+        'INSERT INTO emotion_records (pet_id, emotion, image_key, emotion_text) VALUES ($1, $2, $3, $4) RETURNING id',
+        [petId, emotion, imageKey, parsedEmotionDetails.description]
+      );
+      const emotionRecordId = emotionRecordResult.rows[0].id;
+
+      // Store tips and recommendations
+      for (const tip of parsedEmotionDetails.tipsAndRecs) {
+        await client.query(
+          'INSERT INTO tips_and_recs (emotion_record_id, tip) VALUES ($1, $2)',
+          [emotionRecordId, tip]
+        );
+      }
+
+      await client.query('COMMIT');
+      res.json({ 
+        message: emotion,
+        emotionDetails: parsedEmotionDetails,
+        imageKey: imageKey
+      });
+    } catch (dbError) {
+      await client.query('ROLLBACK');
+      throw dbError;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     console.error('Error:', error);
-    res.status(500).json({ error: 'An error occurred while getting emotion details', details: error.message });
+    res.status(500).json({ error: 'An error occurred while analyzing the image', details: error.message });
   }
 });
 
