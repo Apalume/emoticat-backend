@@ -4,6 +4,7 @@ const { pool } = require('./db');
 const r2Client = require('./r2Client');
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const { authenticateToken } = require('./authMiddleware');
+const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 
@@ -70,7 +71,7 @@ router.post('/analyze', authenticateToken, async (req, res) => {
 
     // Store the emotion record in the database
     const client = await pool.connect();
-    
+
     try {
       await client.query('BEGIN');
       const emotionRecordResult = await client.query(
