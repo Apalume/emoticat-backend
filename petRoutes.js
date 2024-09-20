@@ -119,7 +119,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     );
 
     pet.emotionHistory = emotionRecordsResult.rows;
-
+    console.log(pet)
     res.json(pet);
   } catch (error) {
     console.error('Error fetching pet details:', error);
