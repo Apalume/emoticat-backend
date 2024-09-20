@@ -113,13 +113,17 @@ router.get('/image/:imageKey', authenticateToken, async (req, res) => {
   console.log(`Received request for image ${imageKey} from user ${userId}`);
 
   try {
-    // Verify that the user has access to this image
-    const petResult = await pool.query(
-      'SELECT * FROM pets WHERE image_key = $1 AND user_id = $2',
-      [imageKey, userId]
-    );
 
-    console.log('Pet query result:', petResult.rows);
+    const petResult = await pool.query(`
+      SELECT 'pet' as source FROM pets 
+      WHERE image_key = $1 AND user_id = $2
+      UNION ALL
+      SELECT 'emotion_record' as source FROM emotion_records er
+      JOIN pets p ON er.pet_id = p.id
+      WHERE er.image_key = $1 AND p.user_id = $2
+    `, [imageKey, userId]);
+
+    console.log('Query result:', petResult.rows);
 
     if (petResult.rows.length === 0) {
       console.log(`Access denied for user ${userId} to image ${imageKey}`);
