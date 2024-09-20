@@ -63,6 +63,7 @@ router.post('/add', authenticateToken, upload.single('image'), async (req, res) 
       pet: result.rows[0],
       base64Image: base64Image // Include this if you need it on the client side
     });
+
   } catch (err) {
     console.error('Error adding pet:', err);
     res.status(500).json({ error: 'An error occurred while adding the pet', details: err.message });
@@ -110,7 +111,7 @@ router.get('/image/:imageKey', authenticateToken, async (req, res) => {
   const userId = req.user.id;
 
   try {
-    // First, verify that the user has access to this image
+    // Verify that the user has access to this image
     const petResult = await pool.query(
       'SELECT * FROM pets WHERE image_key = $1 AND user_id = $2',
       [imageKey, userId]
@@ -120,7 +121,7 @@ router.get('/image/:imageKey', authenticateToken, async (req, res) => {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // If access is granted, fetch the image from R2
+    // Fetch the image from R2
     const command = new GetObjectCommand({
       Bucket: BUCKET_NAME,
       Key: imageKey,
@@ -132,24 +133,13 @@ router.get('/image/:imageKey', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Image not found' });
     }
 
-    // Convert the readable stream to a buffer
-    const chunks = [];
-    for await (const chunk of Body) {
-      chunks.push(chunk);
-    }
-    const buffer = Buffer.concat(chunks);
-
-    // Convert buffer to base64
-    const base64Image = buffer.toString('base64');
-
-    // Send the base64 image data and content type
-    res.json({ 
-      imageData: `data:${ContentType};base64,${base64Image}`,
-      contentType: ContentType
-    });
+    // Stream the image data to the response
+    res.set('Content-Type', ContentType);
+    Body.pipe(res);
   } catch (error) {
     console.error('Error fetching image:', error);
     res.status(500).json({ error: 'An error occurred while fetching the image' });
   }
 });
+
 module.exports = router;
