@@ -1,10 +1,13 @@
 const express = require('express');
 const router = express.Router();
 const { pool } = require('./db');
-const authenticateToken = require('./middleware/authenticateToken');
+const { authenticateToken } = require('./authMiddleware');
 const r2Client = require('./r2Client');
 const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const { v4: uuidv4 } = require('uuid');
+
+const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'emoticat';
+
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
