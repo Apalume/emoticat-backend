@@ -4,6 +4,19 @@ const { authenticateToken } = require('./authMiddleware');
 
 const router = express.Router();
 
+router.get('/', authenticateToken, async (req, res) => {
+  try {
+    const client = await pool.connect();
+    const result = await client.query('SELECT * FROM pets WHERE user_id = $1', [req.user.id]);
+    client.release();
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'An error occurred while fetching pets' });
+  }
+});
+
+
 // Add a pet
 router.post('/add', authenticateToken, async (req, res) => {
   const { name, breed, birthday } = req.body;
