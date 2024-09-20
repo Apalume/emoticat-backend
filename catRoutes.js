@@ -64,7 +64,7 @@ router.post('/analyze', authenticateToken, async (req, res) => {
 
       // Get emotion details
       const emotionDetails = await openai.chat.completions.create({
-        model: "gpt-4",
+        model: "gpt-4o",
         messages: [{
           role: "user",
           content: `Return only a valid JSON object with the following structure, and no other text:
@@ -115,7 +115,7 @@ router.post('/get-emotion-details', authenticateToken, async (req, res) => {
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o",
       messages: [{
         role: "user",
         content: `Return only a valid JSON object with the following structure, and no other text:
