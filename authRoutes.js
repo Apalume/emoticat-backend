@@ -18,7 +18,18 @@ router.post('/register', async (req, res) => {
       'INSERT INTO users (username, email, password) VALUES ($1, $2, $3) RETURNING id',
       [username, email, hashedPassword]
     );
-    res.status(201).json({ id: result.rows[0].id, message: 'User registered successfully' });
+    
+    const token = jwt.sign(
+      { id: result.rows[0].id, username },
+      process.env.JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+    
+    res.status(201).json({ 
+      username, 
+      token,
+      message: 'User registered successfully' 
+    });
   } catch (error) {
     console.error('Error registering user:', error);
     res.status(500).json({ error: 'An error occurred while registering the user' });
