@@ -97,7 +97,7 @@ router.post('/add', authenticateToken, upload.single('image'), async (req, res) 
 // Get pet details
 router.get('/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const userId = req.user.id; // Get user ID from authenticated token
+  const userId = req.user.id;
 
   const client = await pool.connect();
   try {
@@ -119,8 +119,8 @@ router.get('/:id', authenticateToken, async (req, res) => {
     );
 
     pet.emotionHistory = emotionRecordsResult.rows;
-    console.log(pet)
-    res.json(pet);
+
+    res.json({ pet }); // Wrap the pet object in a 'pet' property
   } catch (error) {
     console.error('Error fetching pet details:', error);
     res.status(500).json({ error: 'An error occurred while fetching pet details' });
