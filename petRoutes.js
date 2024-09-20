@@ -110,6 +110,8 @@ router.get('/image/:imageKey', authenticateToken, async (req, res) => {
   const { imageKey } = req.params;
   const userId = req.user.id;
 
+  console.log(`Received request for image ${imageKey} from user ${userId}`);
+
   try {
     // Verify that the user has access to this image
     const petResult = await pool.query(
@@ -117,9 +119,14 @@ router.get('/image/:imageKey', authenticateToken, async (req, res) => {
       [imageKey, userId]
     );
 
+    console.log('Pet query result:', petResult.rows);
+
     if (petResult.rows.length === 0) {
+      console.log(`Access denied for user ${userId} to image ${imageKey}`);
       return res.status(403).json({ error: 'Access denied' });
     }
+
+    console.log('Access granted, fetching image from R2');
 
     // Fetch the image from R2
     const command = new GetObjectCommand({
@@ -130,15 +137,18 @@ router.get('/image/:imageKey', authenticateToken, async (req, res) => {
     const { Body, ContentType } = await r2Client.send(command);
 
     if (!Body) {
+      console.log(`Image not found in R2: ${imageKey}`);
       return res.status(404).json({ error: 'Image not found' });
     }
+
+    console.log(`Streaming image ${imageKey} to response`);
 
     // Stream the image data to the response
     res.set('Content-Type', ContentType);
     Body.pipe(res);
   } catch (error) {
     console.error('Error fetching image:', error);
-    res.status(500).json({ error: 'An error occurred while fetching the image' });
+    res.status(500).json({ error: 'An error occurred while fetching the image', details: error.message });
   }
 });
 
