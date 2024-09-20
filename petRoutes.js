@@ -30,13 +30,13 @@ router.post('/add', authenticateToken, upload.single('image'), async (req, res) 
   const userId = req.user.id;
 
   try {
-    let imageUrl = null;
+    let imageKey = null;
     let base64Image = null;
 
     if (req.file) {
       const fileBuffer = req.file.buffer;
       const filename = `${uuidv4()}.jpg`;
-      const imageKey = `pet-images/${filename}`;
+      imageKey = `pet-images/${filename}`;
 
       const uploadParams = {
         Bucket: BUCKET_NAME,
@@ -46,24 +46,18 @@ router.post('/add', authenticateToken, upload.single('image'), async (req, res) 
       };
 
       await r2Client.send(new PutObjectCommand(uploadParams));
-
-      imageUrl = `https://${BUCKET_NAME}.${process.env.R2_CUSTOM_DOMAIN}/${imageKey}`;
       
-      // Convert file buffer to base64 for ChatGPT
+      // Convert file buffer to base64 for ChatGPT if needed
       base64Image = fileBuffer.toString('base64');
     }
 
     // Save pet data to database
     const client = await pool.connect();
     const result = await client.query(
-      'INSERT INTO pets (user_id, name, breed, birthday, image_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [userId, name, breed, birthday, imageUrl]
+      'INSERT INTO pets (user_id, name, breed, birthday, image_key) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [userId, name, breed, birthday, imageKey]
     );
     client.release();
-
-    // Here you can use the base64Image for ChatGPT if needed
-    // For example:
-    // const chatGPTResponse = await sendToChatGPT(base64Image);
 
     res.status(201).json({
       pet: result.rows[0],
@@ -107,6 +101,30 @@ router.get('/:id', authenticateToken, async (req, res) => {
     res.status(500).json({ error: 'An error occurred while fetching pet details' });
   } finally {
     client.release();
+  }
+});
+
+// New route to get pet image
+router.get('/validate-image/:imageKey', authenticateToken, async (req, res) => {
+  const { imageKey } = req.params;
+  const userId = req.user.id;
+
+  try {
+    // Check if the image belongs to a pet owned by the user
+    const result = await pool.query(
+      'SELECT * FROM pets WHERE image_key = $1 AND user_id = $2',
+      [imageKey, userId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // If we get here, the image is valid and the user has permission to view it
+    res.status(200).json({ valid: true });
+  } catch (error) {
+    console.error('Error validating image:', error);
+    res.status(500).json({ error: 'An error occurred while validating the image' });
   }
 });
 
