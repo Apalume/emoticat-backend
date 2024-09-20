@@ -4,7 +4,7 @@ const multer = require('multer');
 const { pool } = require('./db');
 const { authenticateToken } = require('./authMiddleware');
 const r2Client = require('./r2Client');
-const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const { GetObjectCommand, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { v4: uuidv4 } = require('uuid');
 
 const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'emoticat';
@@ -105,27 +105,51 @@ router.get('/:id', authenticateToken, async (req, res) => {
 });
 
 // New route to get pet image
-router.get('/validate-image/:imageKey', authenticateToken, async (req, res) => {
+router.get('/image/:imageKey', authenticateToken, async (req, res) => {
   const { imageKey } = req.params;
   const userId = req.user.id;
 
   try {
-    // Check if the image belongs to a pet owned by the user
-    const result = await pool.query(
+    // First, verify that the user has access to this image
+    const petResult = await pool.query(
       'SELECT * FROM pets WHERE image_key = $1 AND user_id = $2',
       [imageKey, userId]
     );
 
-    if (result.rows.length === 0) {
+    if (petResult.rows.length === 0) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    // If we get here, the image is valid and the user has permission to view it
-    res.status(200).json({ valid: true });
+    // If access is granted, fetch the image from R2
+    const command = new GetObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: imageKey,
+    });
+
+    const { Body, ContentType } = await r2Client.send(command);
+
+    if (!Body) {
+      return res.status(404).json({ error: 'Image not found' });
+    }
+
+    // Convert the readable stream to a buffer
+    const chunks = [];
+    for await (const chunk of Body) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+
+    // Convert buffer to base64
+    const base64Image = buffer.toString('base64');
+
+    // Send the base64 image data and content type
+    res.json({ 
+      imageData: `data:${ContentType};base64,${base64Image}`,
+      contentType: ContentType
+    });
   } catch (error) {
-    console.error('Error validating image:', error);
-    res.status(500).json({ error: 'An error occurred while validating the image' });
+    console.error('Error fetching image:', error);
+    res.status(500).json({ error: 'An error occurred while fetching the image' });
   }
 });
-
 module.exports = router;
