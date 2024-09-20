@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
 const { pool } = require('./db');
 const { authenticateToken } = require('./authMiddleware');
 const r2Client = require('./r2Client');
@@ -7,6 +8,7 @@ const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const { v4: uuidv4 } = require('uuid');
 
 const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'emoticat';
+const upload = multer({ storage: multer.memoryStorage() });
 
 
 router.get('/', authenticateToken, async (req, res) => {
@@ -23,25 +25,33 @@ router.get('/', authenticateToken, async (req, res) => {
 
 
 // Add a pet
-router.post('/add', authenticateToken, async (req, res) => {
-  const { name, breed, birthday, image } = req.body;
+router.post('/add', authenticateToken, upload.single('image'), async (req, res) => {
+  const { name, breed, birthday } = req.body;
   const userId = req.user.id;
 
   try {
-    // Upload image to R2
-    const imageKey = `pet-images/${uuidv4()}.jpg`;
-    const imageBuffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+    let imageUrl = null;
+    let base64Image = null;
 
-    const uploadParams = {
-      Bucket: BUCKET_NAME,
-      Key: imageKey,
-      Body: imageBuffer,
-      ContentType: 'image/jpeg',
-    };
+    if (req.file) {
+      const fileBuffer = req.file.buffer;
+      const filename = `${uuidv4()}.jpg`;
+      const imageKey = `pet-images/${filename}`;
 
-    await r2Client.send(new PutObjectCommand(uploadParams));
+      const uploadParams = {
+        Bucket: BUCKET_NAME,
+        Key: imageKey,
+        Body: fileBuffer,
+        ContentType: req.file.mimetype,
+      };
 
-    const imageUrl = `https://${BUCKET_NAME}.${process.env.R2_CUSTOM_DOMAIN}/${imageKey}`;
+      await r2Client.send(new PutObjectCommand(uploadParams));
+
+      imageUrl = `https://${BUCKET_NAME}.${process.env.R2_CUSTOM_DOMAIN}/${imageKey}`;
+      
+      // Convert file buffer to base64 for ChatGPT
+      base64Image = fileBuffer.toString('base64');
+    }
 
     // Save pet data to database
     const client = await pool.connect();
@@ -51,10 +61,17 @@ router.post('/add', authenticateToken, async (req, res) => {
     );
     client.release();
 
-    res.status(201).json(result.rows[0]);
+    // Here you can use the base64Image for ChatGPT if needed
+    // For example:
+    // const chatGPTResponse = await sendToChatGPT(base64Image);
+
+    res.status(201).json({
+      pet: result.rows[0],
+      base64Image: base64Image // Include this if you need it on the client side
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'An error occurred while adding the pet' });
+    console.error('Error adding pet:', err);
+    res.status(500).json({ error: 'An error occurred while adding the pet', details: err.message });
   }
 });
 
