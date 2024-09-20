@@ -11,6 +11,9 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '50mb' }));
 
+// Create an API router
+const apiRouter = express.Router();
+
 // Use routes
 apiRouter.use('/auth', authRoutes);
 apiRouter.use('/pets', petRoutes);
