@@ -119,7 +119,9 @@ router.get('/:id', authenticateToken, async (req, res) => {
     );
 
     pet.emotionHistory = emotionRecordsResult.rows;
+
     res.json(pet);
+    
   } catch (error) {
     console.error('Error fetching pet details:', error);
     res.status(500).json({ error: 'An error occurred while fetching pet details' });
