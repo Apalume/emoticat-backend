@@ -1,12 +1,12 @@
 const express = require('express');
-const { OpenAI } = require('openai');
-const { pool } = require('./db');
-const r2Client = require('./r2Client');
-const { PutObjectCommand } = require("@aws-sdk/client-s3");
-const { authenticateToken } = require('./authMiddleware');
-const { v4: uuidv4 } = require('uuid');
-
 const router = express.Router();
+const multer = require('multer');
+const { pool } = require('./db');
+const { authenticateToken } = require('./authMiddleware');
+const r2Client = require('./r2Client');
+const {  PutObjectCommand } = require("@aws-sdk/client-s3");
+const { v4: uuidv4 } = require('uuid');
+const { OpenAI } = require('openai');
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
@@ -73,7 +73,7 @@ router.post('/analyze', authenticateToken,  upload.single('image'), async (req, 
       };
 
       await r2Client.send(new PutObjectCommand(uploadParams));
-
+    }
     // Store the emotion record in the database
     const client = await pool.connect();
 
