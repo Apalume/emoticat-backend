@@ -53,18 +53,25 @@ router.post('/analyze', authenticateToken, upload.single('image'), async (req, r
   const { petId } = req.body;
   const image = req.file;
 
+  console.log('Received analyze request:', { petId, imageReceived: !!image });
+
   if (!image || !petId) {
+    console.log('Missing required data:', { image: !!image, petId });
     return res.status(400).json({ error: 'Image and petId are required' });
   }
 
   try {
     // Convert image buffer to base64
     const base64Image = image.buffer.toString('base64');
+    console.log('Image converted to base64');
     
     // Analyze cat emotion
+    console.log('Analyzing cat emotion...');
     const emotion = await analyzeCatEmotion(base64Image);
+    console.log('Emotion analysis result:', emotion);
 
     // Get emotion details
+    console.log('Getting emotion details...');
     const emotionDetails = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [{
@@ -78,7 +85,16 @@ router.post('/analyze', authenticateToken, upload.single('image'), async (req, r
       }]
     });
 
-    const parsedEmotionDetails = JSON.parse(emotionDetails.choices[0].message.content);
+    console.log('Emotion details raw response:', emotionDetails.choices[0].message.content);
+
+    let parsedEmotionDetails;
+    try {
+      parsedEmotionDetails = JSON.parse(emotionDetails.choices[0].message.content);
+      console.log('Parsed emotion details:', parsedEmotionDetails);
+    } catch (parseError) {
+      console.error('Error parsing emotion details:', parseError);
+      throw new Error('Failed to parse emotion details');
+    }
 
     // Store the image in R2
     let imageKey = null;
@@ -93,7 +109,9 @@ router.post('/analyze', authenticateToken, upload.single('image'), async (req, r
         ContentType: image.mimetype,
       };
 
+      console.log('Uploading image to R2...');
       await r2Client.send(new PutObjectCommand(uploadParams));
+      console.log('Image uploaded successfully:', imageKey);
     }
 
     // Store the emotion record in the database
@@ -101,13 +119,16 @@ router.post('/analyze', authenticateToken, upload.single('image'), async (req, r
 
     try {
       await client.query('BEGIN');
+      console.log('Inserting emotion record into database...');
       const emotionRecordResult = await client.query(
         'INSERT INTO emotion_records (pet_id, emotion, image_key, emotion_text) VALUES ($1, $2, $3, $4) RETURNING id',
         [petId, emotion, imageKey, parsedEmotionDetails.description]
       );
       const emotionRecordId = emotionRecordResult.rows[0].id;
+      console.log('Emotion record inserted:', emotionRecordId);
 
       // Store tips and recommendations
+      console.log('Inserting tips and recommendations...');
       for (const tip of parsedEmotionDetails.tipsAndRecs) {
         await client.query(
           'INSERT INTO tips_and_recs (emotion_record_id, tip) VALUES ($1, $2)',
@@ -116,19 +137,24 @@ router.post('/analyze', authenticateToken, upload.single('image'), async (req, r
       }
 
       await client.query('COMMIT');
-      res.json({ 
+      console.log('Database transaction committed');
+
+      const response = { 
         message: emotion,
         emotionDetails: parsedEmotionDetails,
         imageKey: imageKey
-      });
+      };
+      console.log('Sending response:', response);
+      res.json(response);
     } catch (dbError) {
       await client.query('ROLLBACK');
+      console.error('Database error:', dbError);
       throw dbError;
     } finally {
       client.release();
     }
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Error in /analyze route:', error);
     res.status(500).json({ error: 'An error occurred while analyzing the image', details: error.message });
   }
 });
