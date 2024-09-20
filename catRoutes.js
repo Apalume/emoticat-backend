@@ -1,6 +1,8 @@
 const express = require('express');
 const { OpenAI } = require('openai');
 const { pool } = require('./db');
+const r2Client = require('./r2Client');
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
 const { authenticateToken } = require('./authMiddleware');
 
 const router = express.Router();
@@ -10,10 +12,10 @@ const openai = new OpenAI({
 });
 
 async function analyzeCatEmotion(base64Image) {
-  const prompt = `You are an AI picture analysis assistant that helps me figure out the emotion of a cat based off of a given picture which I have provided. First check to see if the animal is a cat. If the animal is a cat, only send back a one word response of the emotion of the cat from the following categories: ["Content", "Happy", "Curious", "Affectionate", "Scared", "Aggressive", "Annoyed", "Anxious", "Sad", "Bored", "Sleepy"]
-  
-  If the animal is not a cat, send back this message strictly: 'ERROR: not a cat'`;
-
+    const prompt = `You are an AI picture analysis assistant that helps me figure out the emotion of a cat based off of a given picture which I have provided. First check to see if the animal is a cat. If the animal is a cat, only send back a one word response of the emotion of the cat from the following categories: ["Content", "Happy", "Curious", "Affectionate", "Scared", "Aggressive", "Annoyed", "Anxious", "Sad", "Bored", "Sleepy"]
+    
+    If the animal is not a cat, send back this message strictly: 'ERROR: not a cat'`;
+    
   try {
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -52,13 +54,28 @@ router.post('/analyze', authenticateToken, async (req, res) => {
   try {
     const result = await analyzeCatEmotion(image);
     
+    // Store the image in R2
+    const imageBuffer = Buffer.from(image, 'base64');
+    const filename = `${uuidv4()}.jpg`;
+    const imageKey = `emotion-images/${filename}`;
+
+    const uploadParams = {
+      Bucket: BUCKET_NAME,
+      Key: imageKey,
+      Body: imageBuffer,
+      ContentType: 'image/jpeg',
+    };
+
+    await r2Client.send(new PutObjectCommand(uploadParams));
+
     // Store the emotion record in the database
     const client = await pool.connect();
+    
     try {
       await client.query('BEGIN');
       const emotionRecordResult = await client.query(
-        'INSERT INTO emotion_records (pet_id, emotion, image_url) VALUES ($1, $2, $3) RETURNING id',
-        [petId, result, image]
+        'INSERT INTO emotion_records (pet_id, emotion, image_key) VALUES ($1, $2, $3) RETURNING id',
+        [petId, result, imageKey]
       );
       const emotionRecordId = emotionRecordResult.rows[0].id;
 
@@ -93,7 +110,11 @@ router.post('/analyze', authenticateToken, async (req, res) => {
       }
 
       await client.query('COMMIT');
-      res.json({ message: result, emotionDetails: parsedEmotionDetails });
+      res.json({ 
+        message: result, 
+        emotionDetails: parsedEmotionDetails,
+        imageKey: imageKey // Include the imageKey in the response
+      });
     } catch (dbError) {
       await client.query('ROLLBACK');
       throw dbError;

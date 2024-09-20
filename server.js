@@ -48,7 +48,7 @@ async function initDatabase() {
         pet_id INTEGER REFERENCES pets(id),
         emotion VARCHAR(50) NOT NULL,
         emotion_text TEXT,
-        image_url TEXT,
+        image_key TEXT,
         timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
