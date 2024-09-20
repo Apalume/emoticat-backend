@@ -6,10 +6,14 @@ const { authenticateToken } = require('./authMiddleware');
 const r2Client = require('./r2Client');
 const { GetObjectCommand, PutObjectCommand } = require("@aws-sdk/client-s3");
 const { v4: uuidv4 } = require('uuid');
+const { OpenAI } = require('openai');
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'emoticat';
 const upload = multer({ storage: multer.memoryStorage() });
-
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
