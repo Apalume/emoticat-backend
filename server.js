@@ -21,6 +21,7 @@ apiRouter.use('/cats', catRoutes);
 
 // Mount the API router at the '/api' path
 app.use('/api', apiRouter);
+
 // Initialize database tables
 async function initDatabase() {
   const client = await pool.connect();
@@ -38,7 +39,8 @@ async function initDatabase() {
         user_id INTEGER REFERENCES users(id),
         name VARCHAR(100) NOT NULL,
         breed VARCHAR(100),
-        birthday DATE
+        birthday DATE,
+        image_url TEXT
       );
 
       CREATE TABLE IF NOT EXISTS emotion_records (
