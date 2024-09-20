@@ -129,6 +129,54 @@ router.get('/:id', authenticateToken, async (req, res) => {
   }
 });
 
+router.put('/update/:id', authenticateToken, upload.single('image'), async (req, res) => {
+  const { id } = req.params;
+  const { name, breed, birthday } = req.body;
+  const userId = req.user.id;
+
+  try {
+    let imageKey = null;
+
+    if (req.file) {
+      const fileBuffer = req.file.buffer;
+      const filename = `${uuidv4()}.jpg`;
+      imageKey = `pet-images/${filename}`;
+
+      const uploadParams = {
+        Bucket: BUCKET_NAME,
+        Key: imageKey,
+        Body: fileBuffer,
+        ContentType: req.file.mimetype,
+      };
+
+      await r2Client.send(new PutObjectCommand(uploadParams));
+    }
+
+    const client = await pool.connect();
+    const updateQuery = `
+      UPDATE pets 
+      SET name = $1, breed = $2, birthday = $3${imageKey ? ', image_key = $4' : ''}
+      WHERE id = $${imageKey ? '5' : '4'} AND user_id = $${imageKey ? '6' : '5'}
+      RETURNING *
+    `;
+    const values = imageKey 
+      ? [name, breed, birthday, imageKey, id, userId]
+      : [name, breed, birthday, id, userId];
+
+    const result = await client.query(updateQuery, values);
+    client.release();
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Pet not found or you do not have permission to update it' });
+    }
+
+    res.json({ pet: result.rows[0] });
+  } catch (err) {
+    console.error('Error updating pet:', err);
+    res.status(500).json({ error: 'An error occurred while updating the pet', details: err.message });
+  }
+});
+
 // New route to get pet image
 router.get('/image/:imageKey', authenticateToken, async (req, res) => {
   const { imageKey } = req.params;
