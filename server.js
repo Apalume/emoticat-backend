@@ -12,10 +12,12 @@ const port = process.env.PORT || 3000;
 app.use(express.json({ limit: '50mb' }));
 
 // Use routes
-app.use('/auth', authRoutes);
-app.use('/pets', petRoutes);
-app.use('/cats', catRoutes);
+apiRouter.use('/auth', authRoutes);
+apiRouter.use('/pets', petRoutes);
+apiRouter.use('/cats', catRoutes);
 
+// Mount the API router at the '/api' path
+app.use('/api', apiRouter);
 // Initialize database tables
 async function initDatabase() {
   const client = await pool.connect();
