@@ -1,8 +1,10 @@
 const express = require('express');
-const { pool } = require('./db');
-const { authenticateToken } = require('./authMiddleware');
-
 const router = express.Router();
+const { pool } = require('./db');
+const authenticateToken = require('./middleware/authenticateToken');
+const r2Client = require('./r2Client');
+const { PutObjectCommand } = require("@aws-sdk/client-s3");
+const { v4: uuidv4 } = require('uuid');
 
 router.get('/', authenticateToken, async (req, res) => {
   try {
@@ -19,25 +21,37 @@ router.get('/', authenticateToken, async (req, res) => {
 
 // Add a pet
 router.post('/add', authenticateToken, async (req, res) => {
-  const { name, breed, birthday } = req.body;
+  const { name, breed, birthday, image } = req.body;
   const userId = req.user.id;
 
-  if (!name) {
-    return res.status(400).json({ error: 'Pet name is required' });
-  }
-
-  const client = await pool.connect();
   try {
+    // Upload image to R2
+    const imageKey = `pet-images/${uuidv4()}.jpg`;
+    const imageBuffer = Buffer.from(image.replace(/^data:image\/\w+;base64,/, ""), 'base64');
+
+    const uploadParams = {
+      Bucket: BUCKET_NAME,
+      Key: imageKey,
+      Body: imageBuffer,
+      ContentType: 'image/jpeg',
+    };
+
+    await r2Client.send(new PutObjectCommand(uploadParams));
+
+    const imageUrl = `https://${BUCKET_NAME}.${process.env.R2_CUSTOM_DOMAIN}/${imageKey}`;
+
+    // Save pet data to database
+    const client = await pool.connect();
     const result = await client.query(
-      'INSERT INTO pets (user_id, name, breed, birthday) VALUES ($1, $2, $3, $4) RETURNING id',
-      [userId, name, breed, birthday]
+      'INSERT INTO pets (user_id, name, breed, birthday, image_url) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [userId, name, breed, birthday, imageUrl]
     );
-    res.status(201).json({ id: result.rows[0].id, message: 'Pet added successfully' });
-  } catch (error) {
-    console.error('Error adding pet:', error);
-    res.status(500).json({ error: 'An error occurred while adding the pet', details: error.message });
-  } finally {
     client.release();
+
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'An error occurred while adding the pet' });
   }
 });
 
