@@ -40,7 +40,7 @@ async function initDatabase() {
         name VARCHAR(100) NOT NULL,
         breed VARCHAR(100),
         birthday DATE,
-        image_url TEXT
+        image_key TEXT
       );
 
       CREATE TABLE IF NOT EXISTS emotion_records (
