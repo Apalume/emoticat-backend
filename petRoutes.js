@@ -25,6 +25,7 @@ router.get('/', authenticateToken, async (req, res) => {
 
 
 // Add a pet
+// Add a pet
 router.post('/add', authenticateToken, upload.single('image'), async (req, res) => {
   const { name, breed, birthday } = req.body;
   const userId = req.user.id;
@@ -32,6 +33,7 @@ router.post('/add', authenticateToken, upload.single('image'), async (req, res) 
   try {
     let imageKey = null;
     let base64Image = null;
+    let guessedBreed = null;
 
     if (req.file) {
       const fileBuffer = req.file.buffer;
@@ -47,21 +49,39 @@ router.post('/add', authenticateToken, upload.single('image'), async (req, res) 
 
       await r2Client.send(new PutObjectCommand(uploadParams));
       
-      // Convert file buffer to base64 for ChatGPT if needed
+      // Convert file buffer to base64 for OpenAI
       base64Image = fileBuffer.toString('base64');
+
+      // Only guess breed if it's not provided
+      if (!breed) {
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Give me your 1 guess on what this cat's breed is most likely. Do not give any other information, only provide me with the breed name you guess that is likely." },
+                { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } },
+              ],
+            },
+          ],
+        });
+
+        guessedBreed = response.choices[0].message.content.trim();
+      }
     }
 
     // Save pet data to database
     const client = await pool.connect();
     const result = await client.query(
       'INSERT INTO pets (user_id, name, breed, birthday, image_key) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-      [userId, name, breed, birthday, imageKey]
+      [userId, name, breed || guessedBreed, birthday, imageKey]
     );
     client.release();
 
     res.status(201).json({
       pet: result.rows[0],
-      base64Image: base64Image // Include this if you need it on the client side
+      guessedBreed: breed ? null : guessedBreed
     });
 
   } catch (err) {
