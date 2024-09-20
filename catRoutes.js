@@ -12,6 +12,10 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
+const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'emoticat';
+const upload = multer({ storage: multer.memoryStorage() });
+
+
 async function analyzeCatEmotion(base64Image) {
     const prompt = `You are an AI picture analysis assistant that helps me figure out the emotion of a cat based off of a given picture which I have provided. First check to see if the animal is a cat. If the animal is a cat, only send back a one word response of the emotion of the cat from the following categories: ["Content", "Happy", "Curious", "Affectionate", "Scared", "Aggressive", "Annoyed", "Anxious", "Sad", "Bored", "Sleepy"]
     
@@ -45,7 +49,7 @@ async function analyzeCatEmotion(base64Image) {
   }
 }
 
-router.post('/analyze', authenticateToken, async (req, res) => {
+router.post('/analyze', authenticateToken,  upload.single('image'), async (req, res) => {
   const { image, petId } = req.body;
 
   if (!image || !petId) {
@@ -56,18 +60,19 @@ router.post('/analyze', authenticateToken, async (req, res) => {
     const result = await analyzeCatEmotion(image);
     
     // Store the image in R2
-    const imageBuffer = Buffer.from(image, 'base64');
-    const filename = `${uuidv4()}.jpg`;
-    const imageKey = `emotion-images/${filename}`;
+    if (image) {
+      const fileBuffer = image.buffer;
+      const filename = `${uuidv4()}.jpg`;
+      imageKey = `pet-images/${filename}`;
 
-    const uploadParams = {
-      Bucket: BUCKET_NAME,
-      Key: imageKey,
-      Body: imageBuffer,
-      ContentType: 'image/jpeg',
-    };
+      const uploadParams = {
+        Bucket: BUCKET_NAME,
+        Key: imageKey,
+        Body: fileBuffer,
+        ContentType: req.file.mimetype,
+      };
 
-    await r2Client.send(new PutObjectCommand(uploadParams));
+      await r2Client.send(new PutObjectCommand(uploadParams));
 
     // Store the emotion record in the database
     const client = await pool.connect();
