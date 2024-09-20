@@ -29,47 +29,75 @@ router.get('/', authenticateToken, async (req, res) => {
 
 
 // Add a pet
-router.get('/:id', authenticateToken, async (req, res) => {
-  const { id } = req.params;
+// Add a pet
+router.post('/add', authenticateToken, upload.single('image'), async (req, res) => {
+  const { name, breed, birthday } = req.body;
   const userId = req.user.id;
 
-  const client = await pool.connect();
   try {
-    const petResult = await client.query('SELECT * FROM pets WHERE id = $1 AND user_id = $2', [id, userId]);
-    
-    if (petResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Pet not found' });
+    let imageKey = null;
+    let base64Image = null;
+    let guessedBreed = null;
+
+    if (req.file) {
+      const fileBuffer = req.file.buffer;
+      const filename = `${uuidv4()}.jpg`;
+      imageKey = `pet-images/${filename}`;
+
+      const uploadParams = {
+        Bucket: BUCKET_NAME,
+        Key: imageKey,
+        Body: fileBuffer,
+        ContentType: req.file.mimetype,
+      };
+
+      await r2Client.send(new PutObjectCommand(uploadParams));
+      
+      // Convert file buffer to base64 for OpenAI
+      base64Image = fileBuffer.toString('base64');
+
+      // Only guess breed if it's not provided
+      if (!breed) {
+        const response = await openai.chat.completions.create({
+          model: "gpt-4o",
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: "Give me your 1 guess on what this cat's breed is most likely. Do not give any other information, only provide me with the breed name you guess that is likely." },
+                { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } },
+              ],
+            },
+          ],
+        });
+
+        guessedBreed = response.choices[0].message.content.trim();
+      }
     }
 
-    const pet = petResult.rows[0];
-
-    const emotionRecordsResult = await client.query(
-      'SELECT er.*, array_agg(tr.tip) as tips_and_recs FROM emotion_records er ' +
-      'LEFT JOIN tips_and_recs tr ON er.id = tr.emotion_record_id ' +
-      'WHERE er.pet_id = $1 ' +
-      'GROUP BY er.id ' +
-      'ORDER BY er.timestamp DESC',
-      [id]
+    // Save pet data to database
+    const client = await pool.connect();
+    const result = await client.query(
+      'INSERT INTO pets (user_id, name, breed, birthday, image_key) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [userId, name, breed || guessedBreed, birthday, imageKey]
     );
-
-    pet.emotionHistory = emotionRecordsResult.rows.map(record => ({
-      ...record,
-      tips_and_recs: record.tips_and_recs.filter(tip => tip !== null)
-    }));
-
-    res.json({ pet });
-  } catch (error) {
-    console.error('Error fetching pet details:', error);
-    res.status(500).json({ error: 'An error occurred while fetching pet details' });
-  } finally {
     client.release();
+
+    res.status(201).json({
+      pet: result.rows[0],
+      guessedBreed: breed ? null : guessedBreed
+    });
+
+  } catch (err) {
+    console.error('Error adding pet:', err);
+    res.status(500).json({ error: 'An error occurred while adding the pet', details: err.message });
   }
 });
 
 // Get pet details
 router.get('/:id', authenticateToken, async (req, res) => {
   const { id } = req.params;
-  const userId = req.user.id;
+  const userId = req.user.id; // Get user ID from authenticated token
 
   const client = await pool.connect();
   try {
@@ -91,8 +119,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     );
 
     pet.emotionHistory = emotionRecordsResult.rows;
-
-    res.json({ pet }); // Wrap the pet object in a 'pet' property
+    res.json(pet);
   } catch (error) {
     console.error('Error fetching pet details:', error);
     res.status(500).json({ error: 'An error occurred while fetching pet details' });
