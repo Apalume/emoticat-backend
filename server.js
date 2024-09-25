@@ -1,26 +1,17 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const authRoutes = require('./authRoutes');
 const petRoutes = require('./petRoutes');
 const catRoutes = require('./catRoutes');
+const { authenticateToken } = require('./authMiddleware');
 const { pool } = require('./db');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '50mb' }));
-
-// Create an API router
-const apiRouter = express.Router();
-
-// Use routes
-apiRouter.use('/auth', authRoutes);
-apiRouter.use('/pets', petRoutes);
-apiRouter.use('/cats', catRoutes);
-
-// Mount the API router at the '/api' path
-app.use('/api', apiRouter);
 
 // Initialize database tables
 async function initDatabase() {
@@ -31,7 +22,8 @@ async function initDatabase() {
         id SERIAL PRIMARY KEY,
         username VARCHAR(100) UNIQUE NOT NULL,
         email VARCHAR(100) UNIQUE NOT NULL,
-        password VARCHAR(100) NOT NULL
+        password VARCHAR(100) NOT NULL,
+        refresh_token TEXT
       );
 
       CREATE TABLE IF NOT EXISTS pets (
@@ -67,6 +59,17 @@ async function initDatabase() {
 }
 
 initDatabase();
+
+// Create an API router
+const apiRouter = express.Router();
+
+// Use routes
+apiRouter.use('/auth', authRoutes);
+apiRouter.use('/pets', authenticateToken, petRoutes);
+apiRouter.use('/cats', authenticateToken, catRoutes);
+
+// Mount the API router at the '/api' path
+app.use('/api', apiRouter);
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
