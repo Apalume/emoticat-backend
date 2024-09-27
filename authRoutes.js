@@ -67,8 +67,13 @@ router.post('/apple', async (req, res) => {
     });
 
     if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.text();
+      const errorData = await tokenResponse.json();
       console.error('Apple auth error response:', errorData);
+      
+      if (errorData.error === 'invalid_grant') {
+        return res.status(400).json({ error: 'Authorization code expired or revoked. Please try signing in again.' });
+      }
+      
       throw new Error(`HTTP error! status: ${tokenResponse.status}`);
     }
 
