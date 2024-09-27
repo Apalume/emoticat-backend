@@ -2,7 +2,7 @@ const express = require('express');
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
-const axios = require('axios');
+const path = require('path');
 const { pool } = require('./db');
 
 const router = express.Router();
@@ -10,7 +10,10 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Function to generate Apple client secret
 const generateAppleClientSecret = () => {
-  return jwt.sign({}, process.env.APPLE_PRIVATE_KEY, {
+  const privateKeyPath = path.resolve(process.env.APPLE_PRIVATE_KEY);
+  const privateKey = fs.readFileSync(privateKeyPath, 'utf8');
+
+  return jwt.sign({}, privateKey, {
     algorithm: 'ES256',
     expiresIn: '1h',
     audience: 'https://appleid.apple.com',
