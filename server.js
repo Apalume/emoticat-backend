@@ -1,16 +1,29 @@
 const express = require('express');
+const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
 require('dotenv').config();
 
 const authRoutes = require('./authRoutes');
 const petRoutes = require('./petRoutes');
 const catRoutes = require('./catRoutes');
-const { authenticateToken } = require('./authMiddleware');
 const { pool } = require('./db');
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '50mb' }));
+
+// Session middleware
+app.use(session({
+  store: new pgSession({
+    pool: pool,
+    tableName: 'user_sessions'
+  }),
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 30 * 24 * 60 * 60 * 1000 } // 30 days
+}));
 
 // Initialize database tables
 async function initDatabase() {
@@ -20,9 +33,19 @@ async function initDatabase() {
       CREATE TABLE IF NOT EXISTS users (
         id SERIAL PRIMARY KEY,
         email VARCHAR(100) UNIQUE NOT NULL,
-        password VARCHAR(100) NOT NULL,
-        refresh_token TEXT
+        name VARCHAR(100)
       );
+
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        sid VARCHAR NOT NULL COLLATE "default",
+        sess JSON NOT NULL,
+        expire TIMESTAMP(6) NOT NULL
+      )
+      WITH (OIDS=FALSE);
+      
+      ALTER TABLE user_sessions ADD CONSTRAINT session_pkey PRIMARY KEY (sid) NOT DEFERRABLE INITIALLY IMMEDIATE;
+
+      CREATE INDEX IF NOT EXISTS IDX_session_expire ON user_sessions (expire);
 
       CREATE TABLE IF NOT EXISTS pets (
         id SERIAL PRIMARY KEY,
@@ -58,13 +81,22 @@ async function initDatabase() {
 
 initDatabase();
 
+// Middleware to check if user is authenticated
+const isAuthenticated = (req, res, next) => {
+  if (req.session.user) {
+    next();
+  } else {
+    res.status(401).json({ error: 'Unauthorized' });
+  }
+};
+
 // Create an API router
 const apiRouter = express.Router();
 
 // Use routes
 apiRouter.use('/auth', authRoutes);
-apiRouter.use('/pets', authenticateToken, petRoutes);
-apiRouter.use('/cats', authenticateToken, catRoutes);
+apiRouter.use('/pets', isAuthenticated, petRoutes);
+apiRouter.use('/cats', isAuthenticated, catRoutes);
 
 // Mount the API router at the '/api' path
 app.use('/api', apiRouter);

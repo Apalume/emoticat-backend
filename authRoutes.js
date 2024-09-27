@@ -1,124 +1,101 @@
 const express = require('express');
-const bcrypt = require('bcrypt');
+const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const axios = require('axios');
 const { pool } = require('./db');
 
 const router = express.Router();
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-router.post('/refresh-token', async (req, res) => {
-  const { refreshToken } = req.body;
-  if (!refreshToken) {
-    return res.status(400).json({ error: 'Refresh token is required' });
-  }
+// Function to generate Apple client secret
+const generateAppleClientSecret = () => {
+  const privateKey = fs.readFileSync(process.env.APPLE_PRIVATE_KEY_PATH);
+  return jwt.sign({}, privateKey, {
+    algorithm: 'ES256',
+    expiresIn: '1h',
+    audience: 'https://appleid.apple.com',
+    issuer: process.env.APPLE_TEAM_ID,
+    subject: process.env.APPLE_CLIENT_ID,
+    keyid: process.env.APPLE_KEY_ID
+  });
+};
 
+router.post('/google', async (req, res) => {
+  const { token } = req.body;
   try {
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    const result = await pool.query('SELECT * FROM users WHERE id = $1 AND refresh_token = $2', [decoded.id, refreshToken]);
-
-    if (result.rows.length > 0) {
-      const user = result.rows[0];
-      const newAccessToken = jwt.sign(
-        { id: user.id, email: user.email },
-        process.env.JWT_SECRET,
-        { expiresIn: '15m' }
-      );
-
-      res.json({ accessToken: newAccessToken });
-    } else {
-      res.status(401).json({ error: 'Invalid refresh token' });
-    }
-  } catch (error) {
-    if (error.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Refresh token expired' });
-    }
-    console.error('Error refreshing token:', error);
-    res.status(500).json({ error: 'An error occurred while refreshing the token' });
-  }
-});
-
-router.post('/login', async (req, res) => {
-  const { email, password } = req.body;
-
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
-
-  try {
-    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (result.rows.length > 0) {
-      const user = result.rows[0];
-      if (await bcrypt.compare(password, user.password)) {
-        const accessToken = jwt.sign(
-          { id: user.id, email: user.email },
-          process.env.JWT_SECRET,
-          { expiresIn: '15m' }
-        );
-        const refreshToken = jwt.sign(
-          { id: user.id, email: user.email },
-          process.env.JWT_REFRESH_SECRET,
-          { expiresIn: '7d' }
-        );
-
-        // Store refresh token in database
-        await pool.query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
-
-        res.json({ 
-          accessToken, 
-          refreshToken,
-          email: user.email
-        });
-      } else {
-        res.status(400).json({ error: 'Invalid password' });
-      }
-    } else {
-      res.status(400).json({ error: 'User not found' });
-    }
-  } catch (error) {
-    console.error('Error logging in:', error);
-    res.status(500).json({ error: 'An error occurred while logging in: ' + error.message });
-  }
-});
-
-// Update the register route if you have one
-router.post('/register', async (req, res) => {
-  const { email, password } = req.body;
-  
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
-
-  try {
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const result = await pool.query(
-      'INSERT INTO users (email, password) VALUES ($1, $2) RETURNING id, email',
-      [email, hashedPassword]
-    );
-    
-    const user = result.rows[0];
-    const accessToken = jwt.sign(
-      { id: user.id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '15m' }
-    );
-    const refreshToken = jwt.sign(
-      { id: user.id, email: user.email },
-      process.env.JWT_REFRESH_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    // Store refresh token in database
-    await pool.query('UPDATE users SET refresh_token = $1 WHERE id = $2', [refreshToken, user.id]);
-    
-    res.status(201).json({ 
-      email: user.email,
-      accessToken,
-      refreshToken,
-      message: 'User registered successfully' 
+    const ticket = await googleClient.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
     });
+    const payload = ticket.getPayload();
+    const { email, name } = payload;
+
+    let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) {
+      // Create a new user if not exists
+      result = await pool.query(
+        'INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id, email, name',
+        [email, name]
+      );
+    }
+    const user = result.rows[0];
+
+    // Set user information in session
+    req.session.user = { id: user.id, email: user.email, name: user.name };
+
+    res.json({ success: true, user: { email: user.email, name: user.name } });
   } catch (error) {
-    console.error('Error registering user:', error);
-    res.status(500).json({ error: 'An error occurred while registering the user' });
+    console.error('Google auth error:', error);
+    res.status(401).json({ error: 'Invalid token' });
   }
+});
+
+router.post('/apple', async (req, res) => {
+  const { code, fullName } = req.body;
+  try {
+    const clientSecret = generateAppleClientSecret();
+    const tokenResponse = await axios.post('https://appleid.apple.com/auth/token', new URLSearchParams({
+      client_id: process.env.APPLE_CLIENT_ID,
+      client_secret: clientSecret,
+      code,
+      grant_type: 'authorization_code'
+    }), {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    });
+
+    const { id_token } = tokenResponse.data;
+    const decodedToken = jwt.decode(id_token);
+    const { email } = decodedToken;
+
+    let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) {
+      // Create a new user if not exists
+      result = await pool.query(
+        'INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id, email, name',
+        [email, fullName]
+      );
+    }
+    const user = result.rows[0];
+
+    // Set user information in session
+    req.session.user = { id: user.id, email: user.email, name: user.name };
+
+    res.json({ success: true, user: { email: user.email, name: user.name } });
+  } catch (error) {
+    console.error('Apple auth error:', error);
+    res.status(401).json({ error: 'Invalid token' });
+  }
+});
+
+router.post('/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      console.error('Logout error:', err);
+      return res.status(500).json({ error: 'Failed to logout' });
+    }
+    res.json({ success: true, message: 'Logged out successfully' });
+  });
 });
 
 module.exports = router;
