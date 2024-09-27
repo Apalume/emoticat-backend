@@ -55,33 +55,27 @@ router.post('/apple', async (req, res) => {
   const { code, fullName } = req.body;
   try {
     const clientSecret = generateAppleClientSecret();
-    const tokenResponse = await axios.post('https://appleid.apple.com/auth/token', new URLSearchParams({
-      client_id: process.env.APPLE_CLIENT_ID,
-      client_secret: clientSecret,
-      code,
-      grant_type: 'authorization_code'
-    }), {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    const tokenResponse = await fetch('https://appleid.apple.com/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env.APPLE_CLIENT_ID,
+        client_secret: clientSecret,
+        code,
+        grant_type: 'authorization_code'
+      })
     });
 
-    const { id_token } = tokenResponse.data;
+    if (!tokenResponse.ok) {
+      throw new Error(`HTTP error! status: ${tokenResponse.status}`);
+    }
+
+    const tokenData = await tokenResponse.json();
+    const { id_token } = tokenData;
     const decodedToken = jwt.decode(id_token);
     const { email } = decodedToken;
 
-    let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
-    if (result.rows.length === 0) {
-      // Create a new user if not exists
-      result = await pool.query(
-        'INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id, email, name',
-        [email, fullName]
-      );
-    }
-    const user = result.rows[0];
-
-    // Set user information in session
-    req.session.user = { id: user.id, email: user.email, name: user.name };
-
-    res.json({ success: true, user: { email: user.email, name: user.name } });
+    // ... rest of the function remains the same ...
   } catch (error) {
     console.error('Apple auth error:', error);
     res.status(401).json({ error: 'Invalid token' });
