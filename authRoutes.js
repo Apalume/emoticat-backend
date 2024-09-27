@@ -10,7 +10,7 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Function to generate Apple client secret
 const generateAppleClientSecret = () => {
-  return jwt.sign({}, process.env.APPLE_PRIVATE_KEY), {
+  return jwt.sign({}, process.env.APPLE_PRIVATE_KEY, {
     algorithm: 'ES256',
     expiresIn: '1h',
     audience: 'https://appleid.apple.com',
