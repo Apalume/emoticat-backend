@@ -61,11 +61,14 @@ router.post('/apple', async (req, res) => {
         client_id: process.env.APPLE_CLIENT_ID,
         client_secret: clientSecret,
         code,
-        grant_type: 'authorization_code'
+        grant_type: 'authorization_code',
+        redirect_uri: process.env.APPLE_REDIRECT_URI // Make sure this is set in your .env file
       })
     });
 
     if (!tokenResponse.ok) {
+      const errorData = await tokenResponse.text();
+      console.error('Apple auth error response:', errorData);
       throw new Error(`HTTP error! status: ${tokenResponse.status}`);
     }
 
@@ -74,10 +77,23 @@ router.post('/apple', async (req, res) => {
     const decodedToken = jwt.decode(id_token);
     const { email } = decodedToken;
 
-    // ... rest of the function remains the same ...
+    let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    if (result.rows.length === 0) {
+      // Create a new user if not exists
+      result = await pool.query(
+        'INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id, email, name',
+        [email, fullName]
+      );
+    }
+    const user = result.rows[0];
+
+    // Set user information in session
+    req.session.user = { id: user.id, email: user.email, name: user.name };
+
+    res.json({ success: true, user: { email: user.email, name: user.name } });
   } catch (error) {
     console.error('Apple auth error:', error);
-    res.status(401).json({ error: 'Invalid token' });
+    res.status(401).json({ error: 'Authentication failed' });
   }
 });
 
