@@ -4,6 +4,7 @@
     "@aws-sdk/s3-request-presigner": "^3.654.0",
     "@react-native-async-storage/async-storage": "^2.0.0",
     "apple-auth": "^1.0.9",
+    "axios": "^1.7.7",
     "bcrypt": "^5.1.1",
     "connect-pg-simple": "^10.0.0",
     "dotenv": "^16.4.5",
