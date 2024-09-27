@@ -1,27 +1,10 @@
 const express = require('express');
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
-const fs = require('fs');
-const path = require('path');
 const { pool } = require('./db');
 
 const router = express.Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-// Function to generate Apple client secret
-const generateAppleClientSecret = () => {
-  const privateKeyPath = path.resolve(process.env.APPLE_PRIVATE_KEY);
-  const privateKey = fs.readFileSync(privateKeyPath, 'utf8');
-
-  return jwt.sign({}, privateKey, {
-    algorithm: 'ES256',
-    expiresIn: '1h',
-    audience: 'https://appleid.apple.com',
-    issuer: process.env.APPLE_TEAM_ID,
-    subject: process.env.APPLE_CLIENT_ID,
-    keyid: process.env.APPLE_KEY_ID
-  });
-};
 
 router.post('/google', async (req, res) => {
   const { token } = req.body;
@@ -54,43 +37,42 @@ router.post('/google', async (req, res) => {
 });
 
 router.post('/apple', async (req, res) => {
-  const { code, fullName } = req.body;
+  const { code, id_token, fullName } = req.body;
   try {
-    const clientSecret = generateAppleClientSecret();
-    const tokenResponse = await fetch('https://appleid.apple.com/auth/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: process.env.APPLE_CLIENT_ID,
-        client_secret: clientSecret,
-        code,
-        grant_type: 'authorization_code',
-        redirect_uri: process.env.APPLE_REDIRECT_URI // Make sure this is set in your .env file
-      })
-    });
+    let email, name;
 
-    if (!tokenResponse.ok) {
-      const errorData = await tokenResponse.json();
-      console.error('Apple auth error response:', errorData);
+    if (id_token) {
+      // Validate the ID token with Apple's public key
+      const user = await appleSignin.verifyIdToken(id_token, {
+        audience: process.env.APPLE_CLIENT_ID, // Your Apple Service ID
+        ignoreExpiration: true, // Handle token expiration as needed
+      });
+      email = user.email;
+    } else if (code) {
+      // Exchange authorization code for tokens
+      const clientSecret = generateAppleClientSecret();
+      const tokenResponse = await appleSignin.getAuthorizationToken(code, {
+        clientID: process.env.APPLE_CLIENT_ID,
+        clientSecret,
+        redirectUri: process.env.APPLE_REDIRECT_URI,
+      });
       
-      if (errorData.error === 'invalid_grant') {
-        return res.status(400).json({ error: 'Authorization code expired or revoked. Please try signing in again.' });
-      }
-      
-      throw new Error(`HTTP error! status: ${tokenResponse.status}`);
+      const { id_token: newIdToken } = tokenResponse;
+      const decodedToken = jwt.decode(newIdToken);
+      email = decodedToken.email;
+    } else {
+      throw new Error('Neither id_token nor code provided');
     }
 
-    const tokenData = await tokenResponse.json();
-    const { id_token } = tokenData;
-    const decodedToken = jwt.decode(id_token);
-    const { email } = decodedToken;
+    // Use fullName if provided, otherwise use email as name
+    name = fullName || email.split('@')[0];
 
     let result = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
     if (result.rows.length === 0) {
       // Create a new user if not exists
       result = await pool.query(
         'INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id, email, name',
-        [email, fullName]
+        [email, name]
       );
     }
     const user = result.rows[0];
@@ -101,7 +83,7 @@ router.post('/apple', async (req, res) => {
     res.json({ success: true, user: { email: user.email, name: user.name } });
   } catch (error) {
     console.error('Apple auth error:', error);
-    res.status(401).json({ error: 'Authentication failed' });
+    res.status(401).json({ error: 'Authentication failed', details: error.message });
   }
 });
 
